@@ -6,7 +6,9 @@ import concurrent.futures
 import os
 import struct
 import sys
-from typing import Callable, IO, Iterable, List, Optional, Tuple
+import types
+
+from typing import Callable, Dict, IO, Iterable, List, Optional, Tuple
 
 from .utils import isLatinAlpha, isLatinDigit, isLatinHexAlpha, formatNumber, ALPHA, DIGITS, HEX
 
@@ -58,13 +60,19 @@ else:
     zipfile = None
 
 
+try:
+    import libarchive
+except ImportError:
+    libarchive = None
+
+
 # Defining lambdas does not yet check the names of entities used inside the lambda!
 CompressionInfo = collections.namedtuple(
     'CompressionInfo', ['suffixes', 'doubleSuffixes', 'moduleName', 'checkHeader', 'open']
 )
 
 
-supportedCompressions = {
+TAR_COMPRESSION_FORMATS: Dict[str, CompressionInfo] = {
     'bz2': CompressionInfo(
         ['bz2', 'bzip2'],
         ['tb2', 'tbz', 'tbz2', 'tz2'],
@@ -79,26 +87,12 @@ supportedCompressions = {
         lambda x: x.read(2) == b'\x1F\x8B',
         lambda x: indexed_gzip.IndexedGzipFile(fileobj=x),
     ),
-    'rar': CompressionInfo(
-        ['rar'],
-        [],
-        'rarfile',
-        lambda x: x.read(6) == b'Rar!\x1A\x07',
-        lambda x: rarfile.RarFile(x),
-    ),
     'xz': CompressionInfo(
         ['xz'],
         ['txz'],
         'lzmaffi' if 'lzmaffi' in sys.modules else 'xz',
         lambda x: x.read(6) == b"\xFD7zXZ\x00",
-        (lambda x: lzmaffi.open(x)) if 'lzmaffi' in sys.modules else (lambda x: xz.open(x)),
-    ),
-    'zip': CompressionInfo(
-        ['zip'],
-        [],
-        'zipfile',
-        lambda x: x.read(2) == b'PK',
-        lambda x: zipfile.ZipFile(x),
+        lzmaffi.open if 'lzmaffi' in sys.modules and isinstance(lzmaffi, types.ModuleType) else lambda x: xz.open(x),
     ),
     'zst': CompressionInfo(
         ['zst', 'zstd'],
@@ -108,6 +102,46 @@ supportedCompressions = {
         lambda x: indexed_zstd.IndexedZstdFile(x.fileno()),
     ),
 }
+
+
+ARCHIVE_FORMATS: Dict[str, CompressionInfo] = {
+    'rar': CompressionInfo(
+        ['rar'],
+        [],
+        'rarfile',
+        lambda x: x.read(6) == b'Rar!\x1A\x07',
+        lambda x: rarfile.RarFile(x),
+    ),
+    'zip': CompressionInfo(
+        ['zip'],
+        [],
+        'zipfile',
+        lambda x: x.read(2) == b'PK',
+        lambda x: zipfile.ZipFile(x),
+    ),
+}
+
+
+LIBARCHIVE_FORMATS: Dict[str, CompressionInfo] = {}
+if 'libarchive' in sys.modules and isinstance(libarchive, types.ModuleType):
+    LIBARCHIVE_FORMATS = {
+        extensions[0]: CompressionInfo(extensions, [], 'libarchive', headerCheck, libarchive.SeekableArchive)
+        for extensions, headerCheck in [
+            (['7z', '7zip'], lambda x: x.read(6) == b'7z\xBC\xAF\x27\x1C'),
+            (['ar'], lambda x: x.read(8) == b'<aiaff>\n'),
+            (['rpm'], lambda x: x.read(4) == b'\xED\xAB\xEE\xDB'),
+            (['deb'], lambda x: x.read(4) == b'\x21\x3C\x61\x72'),
+            (['xar'], lambda x: x.read(4) == b'\x78\x61\x72\x21'),
+            (['lz4'], lambda x: x.read(4) == b'\x04\x22\x4C\x5A'),
+            (['lzma'], lambda x: x.read(4) == b'\x5D\x00\x00\x80'),
+            (['lzo'], lambda x: x.read(4) == b'\x89\x4C\x5A\x4F'),
+            (['cpio'], lambda x: x.read(6) == b'\x07\x07\x07\x07'),
+            (['iso'], lambda x: True),
+        ]
+    }
+
+
+supportedCompressions = {**TAR_COMPRESSION_FORMATS, **ARCHIVE_FORMATS, **LIBARCHIVE_FORMATS}
 
 
 def stripSuffixFromCompressedFile(path: str) -> str:

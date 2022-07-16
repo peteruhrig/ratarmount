@@ -45,7 +45,7 @@ from .MountSource import FileInfo, MountSource
 from .ProgressBar import ProgressBar
 from .SQLiteBlobFile import SQLiteBlobsFile, WriteSQLiteBlobs
 from .StenciledFile import StenciledFile
-from .compressions import getGzipInfo, supportedCompressions
+from .compressions import getGzipInfo, TAR_COMPRESSION_FORMATS
 from .utils import (
     RatarmountError,
     IndexNotOpenError,
@@ -977,11 +977,11 @@ class SQLiteIndexedTar(MountSource):
                 makeVersionRow('index', SQLiteIndexedTar.__version__),
             ]
 
-            for _, cinfo in supportedCompressions.items():
-                if cinfo.moduleName in sys.modules:
-                    moduleVersion = findModuleVersion(sys.modules[cinfo.moduleName])
+            for moduleName in set(info.moduleName for _, info in TAR_COMPRESSION_FORMATS.items()):
+                if moduleName in sys.modules:
+                    moduleVersion = findModuleVersion(sys.modules[moduleName])
                     if moduleVersion:
-                        versions += [makeVersionRow(cinfo.moduleName, moduleVersion)]
+                        versions += [makeVersionRow(moduleName, moduleVersion)]
 
             connection.executemany('INSERT OR REPLACE INTO "versions" VALUES (?,?,?,?,?)', versions)
         except Exception as exception:
@@ -2093,10 +2093,7 @@ class SQLiteIndexedTar(MountSource):
             return None
 
         oldOffset = fileobj.tell()
-        for compressionId, compression in supportedCompressions.items():
-            if compressionId in ['rar', 'zip']:
-                continue
-
+        for compressionId, compression in TAR_COMPRESSION_FORMATS.items():
             # The header check is a necessary condition not a sufficient condition.
             # Especially for gzip, which only has 2 magic bytes, false positives might happen.
             # Therefore, only use the magic bytes based check if the module could not be found
@@ -2157,10 +2154,10 @@ class SQLiteIndexedTar(MountSource):
         if printDebug >= 3:
             print(f"[Info] Detected compression {compression} for file object:", fileobj)
 
-        if compression not in supportedCompressions:
+        if compression not in TAR_COMPRESSION_FORMATS:
             return fileobj, None, compression, SQLiteIndexedTar._detectTar(fileobj, encoding, printDebug=printDebug)
 
-        cinfo = supportedCompressions[compression]
+        cinfo = TAR_COMPRESSION_FORMATS[compression]
         if cinfo.moduleName not in sys.modules:
             raise CompressionError(
                 f"Can't open a {compression} compressed file '{fileobj.name}' without {cinfo.moduleName} module!"

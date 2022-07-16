@@ -7,7 +7,7 @@ import traceback
 
 from typing import IO, Union
 
-from .compressions import supportedCompressions, checkForSplitFile, rarfile, zipfile
+from .compressions import supportedCompressions, checkForSplitFile, rarfile, zipfile, libarchive
 from .utils import CompressionError, RatarmountError
 from .MountSource import MountSource
 from .FolderMountSource import FolderMountSource
@@ -16,6 +16,7 @@ from .SingleFileMountSource import SingleFileMountSource
 from .SQLiteIndexedTar import SQLiteIndexedTar
 from .StenciledFile import JoinedFileFromFactory
 from .ZipMountSource import ZipMountSource
+from .LibarchiveMountSource import LibarchiveMountSource
 
 
 def openMountSource(fileOrPath: Union[str, IO[bytes]], **options) -> MountSource:
@@ -40,6 +41,33 @@ def openMountSource(fileOrPath: Union[str, IO[bytes]], **options) -> MountSource
             fileOrPath = JoinedFileFromFactory(
                 [(lambda file=file: open(file, 'rb')) for file in filesToJoin]  # type: ignore
             )
+
+    if "libarchive" in sys.modules:
+        forceLibarchive: bool = bool(options.get("forceLibarchive", False))
+        formatsWithAlternativeBackends = ('zip', 'tar', 'rar') if not forceLibarchive else (None,)
+        if printDebug > 1 and forceLibarchive:
+            print("[Info] ZIP, TAR, and RAR files will be handled by libarchive instead of the default backends.")
+
+        try:
+            if forceLibarchive and libarchive.is_archive(fileOrPath):
+                return LibarchiveMountSource(fileOrPath, **options)
+
+            if not libarchive.is_archive(fileOrPath, formats=formatsWithAlternativeBackends):
+                return LibarchiveMountSource(fileOrPath, **options)
+        except Exception as exception:
+            if printDebug >= 1:
+                print("[Info] Checking for libarchive file raised an exception:", exception)
+            if printDebug >= 2:
+                traceback.print_exc()
+        finally:
+            try:
+                if hasattr(fileOrPath, 'seek'):
+                    fileOrPath.seek(0)  # type: ignore
+            except Exception as exception:
+                if printDebug >= 1:
+                    print("[Info] seek(0) raised an exception:", exception)
+                if printDebug >= 2:
+                    traceback.print_exc()
 
     try:
         if 'rarfile' in sys.modules and rarfile.is_rarfile(fileOrPath):
