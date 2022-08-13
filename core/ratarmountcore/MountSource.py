@@ -41,6 +41,12 @@ class MountSource(ABC):
     If there is is no leading slash, behave as if there was one.
     """
 
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        pass
+
     @abstractmethod
     def listDir(self, path: str) -> Optional[Union[Iterable[str], Dict[str, FileInfo]]]:
         pass

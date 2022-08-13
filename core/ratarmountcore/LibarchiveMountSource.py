@@ -36,7 +36,10 @@ class LibarchiveFile(io.RawIOBase):
 
     @overrides(io.RawIOBase)
     def close(self) -> None:
-        self.fileobj.close()
+        # Close on the file object unexpectedly closes the whole archive!
+        # https://github.com/smartfile/python-libarchive/issues/23
+        # self.fileobj.close()
+        pass
 
     @overrides(io.RawIOBase)
     def fileno(self) -> int:
@@ -96,8 +99,20 @@ class LibarchiveMountSource(MountSource):
         self.fileObject: libarchive.SeekableArchive = libarchive.SeekableArchive(fileOrPath, mode='r')
         for password in options.get("passwords", []):
             self.fileObject.add_passphrase(password)
+        # Note that list may only be called once for some reason in python-libarchive 4.1.0
+        # https://github.com/smartfile/python-libarchive/issues/22
         self.files = list(self.fileObject)
         self.options = options
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.fileObject.__exit__(*args)
+
+    def close(self, *args):
+        if hasattr(self.fileObject, 'denit'):
+            self.fileObject.denit()
 
     @staticmethod
     def _convertToFileInfo(entry: "libarchive.Entry") -> FileInfo:

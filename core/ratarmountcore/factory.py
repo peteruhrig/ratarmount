@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import io
 import os
 import sys
 import traceback
 
 from typing import IO, Union
 
-from .compressions import supportedCompressions, checkForSplitFile, rarfile, zipfile, libarchive
+from .compressions import (
+    ARCHIVE_FORMATS,
+    TAR_COMPRESSION_FORMATS,
+    supportedCompressions,
+    checkForSplitFile,
+    rarfile,
+    zipfile,
+    libarchive,
+)
 from .utils import CompressionError, RatarmountError
 from .MountSource import MountSource
 from .FolderMountSource import FolderMountSource
@@ -42,32 +51,64 @@ def openMountSource(fileOrPath: Union[str, IO[bytes]], **options) -> MountSource
                 [(lambda file=file: open(file, 'rb')) for file in filesToJoin]  # type: ignore
             )
 
+    if not isinstance(fileOrPath, str):
+        print("READ FIRST TWO BYTES:", fileOrPath.read(2))
+        # TODO SEEKING BACK DOES NOT WORK! It will simply read the next two bytes and even throw
+        # when the end of file has been reached!!!
+        fileOrPath.seek(0, io.SEEK_SET)
+        print("READ FIRST TWO BYTES:", fileOrPath.read(2))
+
     if "libarchive" in sys.modules:
-        forceLibarchive: bool = bool(options.get("forceLibarchive", False))
-        formatsWithAlternativeBackends = ('zip', 'tar', 'rar') if not forceLibarchive else (None,)
-        if printDebug > 1 and forceLibarchive:
-            print("[Info] ZIP, TAR, and RAR files will be handled by libarchive instead of the default backends.")
-
-        try:
-            if forceLibarchive and libarchive.is_archive(fileOrPath):
-                return LibarchiveMountSource(fileOrPath, **options)
-
-            if not libarchive.is_archive(fileOrPath, formats=formatsWithAlternativeBackends):
-                return LibarchiveMountSource(fileOrPath, **options)
-        except Exception as exception:
-            if printDebug >= 1:
-                print("[Info] Checking for libarchive file raised an exception:", exception)
-            if printDebug >= 2:
-                traceback.print_exc()
-        finally:
+        # Neither python-libarchive nor libarchive support opening raw Python file objects.
+        # Because of the latter it might not be possible anytime soon. Test against this for better error messages.
+        hasFileNumber = isinstance(fileOrPath, str)
+        if not isinstance(fileOrPath, str) and hasattr(fileOrPath, 'fileno'):
             try:
-                if hasattr(fileOrPath, 'seek'):
-                    fileOrPath.seek(0)  # type: ignore
+                fileOrPath.fileno()
+                hasFileNumber = True
+            except io.UnsupportedOperation:
+                pass
+
+        if hasFileNumber:
+            forceLibarchive: bool = bool(options.get("forceLibarchive", False))
+            if printDebug > 1 and forceLibarchive:
+                print("[Info] ZIP, TAR, and RAR files will be handled by libarchive instead of the default backends.")
+
+            try:
+                # libarchive.is_archive checks whether it is the archive is any of the types specified in "formats"
+                # optionally compressed with any of the compression standards specified in "filters", i.e., "filters"
+                # does not filter archive formats! If any of both is empty, it is interpreted as wildcards.
+                # E.g., use is_archive(path, formats=('tar',), filter=('bz2')) to only test for .tar.bz2 files.
+                # When not forced, do not open any of the formats for which a backend exists.
+                archiveIsEligible = (
+                    libarchive.is_archive(fileOrPath)
+                    if forceLibarchive
+                    else not libarchive.is_archive(
+                        fileOrPath,
+                        formats=['tar'] + list(ARCHIVE_FORMATS.keys()),
+                        filters=tuple(TAR_COMPRESSION_FORMATS.keys()),
+                    )
+                )
+
+                if archiveIsEligible:
+                    if printDebug >= 1:
+                        print("[Info] Opening archive with libarchive backend.")
+                        print("[Info] No index will be created and performance is untestest.")
+                    return LibarchiveMountSource(fileOrPath, **options)
             except Exception as exception:
                 if printDebug >= 1:
-                    print("[Info] seek(0) raised an exception:", exception)
+                    print("[Info] Checking for libarchive file raised an exception:", exception)
                 if printDebug >= 2:
                     traceback.print_exc()
+            finally:
+                try:
+                    if hasattr(fileOrPath, 'seek'):
+                        fileOrPath.seek(0)  # type: ignore
+                except Exception as exception:
+                    if printDebug >= 1:
+                        print("[Info] seek(0) raised an exception:", exception)
+                    if printDebug >= 2:
+                        traceback.print_exc()
 
     try:
         if 'rarfile' in sys.modules and rarfile.is_rarfile(fileOrPath):
