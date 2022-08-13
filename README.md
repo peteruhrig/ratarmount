@@ -98,10 +98,13 @@ On macOS, you have to install [macFUSE](https://osxfuse.github.io/) with:
 brew install macfuse
 ```
 
-If you are installing on a system for which there exists no manylinux wheel, then you'll have to install dependencies required to build from source:
+If you are installing on a system for which there exists no manylinux wheel, then you'll have to install further dependencies that are required to build some of the Python packages that ratarmount depends on from source:
 
 ```bash
-sudo apt install python3 python3-pip fuse build-essential software-properties-common zlib1g-dev libzstd-dev liblzma-dev cffi
+sudo apt install \
+    python3 python3-pip fuse \
+    build-essential software-properties-common \
+    zlib1g-dev libzstd-dev liblzma-dev cffi
 ```
 
 ## PIP Package Installation
@@ -129,6 +132,12 @@ But, as a quick workaround, you can try to simply switch out the xz decoder back
 sudo apt install liblzma-dev
 python3 -m pip install --user cffi  # Necessary because of missing pyprojects.toml
 python3 -m pip install --user lzmaffi
+```
+
+Similar notes apply to the libarchive backend. It has to be installed explicitly:
+
+```bash
+python3 -m pip install --user python-libarchive>=4.2.0
 ```
 
 
